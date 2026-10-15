@@ -2,9 +2,7 @@
 
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { TooltipProvider } from "@bb/shared-ui/tooltip";
-import { useState } from "react";
 import { afterEach, expect, it, vi } from "vitest";
-import { SidebarProvider } from "@/components/ui/sidebar";
 import { SecondaryPanelTabStrip } from "./SecondaryPanelTabStrip";
 import { SidebarSplitContainer } from "./SidebarSplitContainer";
 
@@ -15,7 +13,6 @@ const descriptors = ["alpha.ts", "beta.ts"].map((label) => ({
 }));
 
 afterEach(() => {
-  fireEvent(window, new MouseEvent("pointercancel"));
   cleanup();
   window.localStorage.clear();
   vi.restoreAllMocks();
@@ -27,64 +24,49 @@ function renderTabs() {
   const onSelect = vi.fn();
   const onReorder = vi.fn();
 
-  function Harness() {
-    const [activeTabId, setActiveTabId] = useState("alpha.ts");
-    return (
-      <SidebarProvider>
-        <TooltipProvider>
-          <aside>
-            <SidebarSplitContainer
-              activeTabId={activeTabId}
-              isFullScreen={false}
-              onActivateTab={setActiveTabId}
-              onGlobalTabReorder={onReorder}
-              onToggleFullScreen={() => {}}
-              panelStateId="tab-gestures"
-              tabs={descriptors}
-              renderPane={({
-                group,
-                onBeginTabDrag,
-                onReorderTab,
-                onSelectTab,
-              }) => (
-                <div data-testid="thread-secondary-panel-top-chrome">
-                  <SecondaryPanelTabStrip
-                    activeTabId={group.activeTabId}
-                    tabs={group.tabIds.map((id) => ({
-                      label: id,
-                      leadingVisual: null,
-                      statusLabel: null,
-                      onClose: () => onClose(id),
-                      onSelect: () => {
-                        onSelect(id);
-                        onSelectTab(id);
-                      },
-                      renderContent: () => null,
-                      tab: {
-                        id,
-                        kind: "host-file-preview" as const,
-                        environmentId: null,
-                        hostId: null,
-                        lineRange: null,
-                        path: id,
-                        threadId: null,
-                      },
-                    }))}
-                    onBeginTabDrag={onBeginTabDrag}
-                    onReorderTab={onReorderTab}
-                    usesDesktopChrome={false}
-                    isPanelOpen
-                  />
-                </div>
-              )}
-            />
-          </aside>
-        </TooltipProvider>
-      </SidebarProvider>
-    );
-  }
-
-  render(<Harness />);
+  render(
+    <TooltipProvider>
+      <aside>
+        <SidebarSplitContainer
+          activeTabId="alpha.ts"
+          isFullScreen={false}
+          onActivateTab={() => {}}
+          onGlobalTabReorder={onReorder}
+          onToggleFullScreen={() => {}}
+          panelStateId="tab-gestures"
+          tabs={descriptors}
+          renderPane={({ group, onBeginTabDrag, onReorderTab }) => (
+            <div data-testid="thread-secondary-panel-top-chrome">
+              <SecondaryPanelTabStrip
+                activeTabId={group.activeTabId}
+                tabs={group.tabIds.map((id) => ({
+                  label: id,
+                  leadingVisual: null,
+                  statusLabel: null,
+                  onClose: () => onClose(id),
+                  onSelect: () => onSelect(id),
+                  renderContent: () => null,
+                  tab: {
+                    id,
+                    kind: "host-file-preview" as const,
+                    environmentId: null,
+                    hostId: null,
+                    lineRange: null,
+                    path: id,
+                    threadId: null,
+                  },
+                }))}
+                onBeginTabDrag={onBeginTabDrag}
+                onReorderTab={onReorderTab}
+                usesDesktopChrome={false}
+                isPanelOpen
+              />
+            </div>
+          )}
+        />
+      </aside>
+    </TooltipProvider>,
+  );
   Object.defineProperty(document, "elementsFromPoint", {
     configurable: true,
     value: () => [],
