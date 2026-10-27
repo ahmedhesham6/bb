@@ -129,6 +129,7 @@ it("accepts deleted authors and empty connections, discards disabled issues, and
   const repo = {
     ...repository(),
     hasIssuesEnabled: false,
+    openIssues: { nodes: [node(1)], pageInfo: nextPage("c1") },
     openPrs: {
       nodes: [
         {
@@ -169,7 +170,7 @@ it("accepts deleted authors and empty connections, discards disabled issues, and
   });
 });
 
-it.each([
+it.each<[string, Error | string, string?]>([
   ["process failure", new Error("timeout")],
   ["invalid JSON", "broken"],
   ["null repository", JSON.stringify({ data: { repository: null } })],
@@ -202,21 +203,66 @@ it.each([
     }),
   ],
   [
+    "missing first-page cursor",
+    response({
+      ...repository(),
+      openIssues: {
+        nodes: [node(1)],
+        pageInfo: { hasNextPage: true, endCursor: null },
+      },
+    }),
+  ],
+  [
     "failed follow-up page",
     response({
       ...repository(),
       openPrs: { nodes: [node(3)], pageInfo: nextPage("unanswered") },
     }),
   ],
+  [
+    "follow-up GraphQL error",
+    response({
+      ...repository(),
+      openPrs: { nodes: [node(3)], pageInfo: nextPage("c1") },
+    }),
+    JSON.stringify({
+      data: {
+        repository: { openPrs: { nodes: [node(7)], pageInfo: lastPage } },
+      },
+      errors: [{ message: "resource limit", path: ["repository", "openPrs"] }],
+    }),
+  ],
+  [
+    "follow-up null repository",
+    response({
+      ...repository(),
+      openPrs: { nodes: [node(3)], pageInfo: nextPage("c1") },
+    }),
+    JSON.stringify({ data: { repository: null } }),
+  ],
+  [
+    "missing follow-up cursor",
+    response({
+      ...repository(),
+      openPrs: { nodes: [node(3)], pageInfo: nextPage("c1") },
+    }),
+    response({
+      openPrs: {
+        nodes: [node(7)],
+        pageInfo: { hasNextPage: true, endCursor: null },
+      },
+    }),
+  ],
 ])(
   "retains repository rows and cursor after %s, then allows another repository to succeed",
-  async (_name, failed) => {
+  async (_name, failed, followUp) => {
     fake.responses.set("one", response());
     const { harness, bb } = await start();
     await harness.behavior.callRpc("refresh");
     const before = await harness.behavior.callRpc("listItems", {});
     const cursor = await bb.storage.kv.get("sync-cursor");
     fake.responses.set("one", failed);
+    if (followUp !== undefined) fake.responses.set("one@c1", followUp);
     await expect(harness.behavior.callRpc("refresh")).rejects.toThrow();
     expect(await harness.behavior.callRpc("listItems", {})).toEqual(before);
     expect(await bb.storage.kv.get("sync-cursor")).toEqual(cursor);
