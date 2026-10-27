@@ -249,7 +249,6 @@ it("stores open issues beyond the first page", async () => {
   fake.responses.set(
     "one@c1",
     response({
-      ...repository(),
       openIssues: {
         nodes: [node(6)],
         pageInfo: { hasNextPage: false, endCursor: "c2" },
@@ -285,7 +284,6 @@ it("pages open pull requests and keeps one row when an item moves between lists"
   fake.responses.set(
     "one@Y3Vyc29yOnYyOpK0MjAyNi0wNy0wOVQwNzo1NzoyNVrPAAAAASC_YbE=",
     response({
-      ...repository(),
       openPrs: { nodes: [node(4), node(7)], pageInfo: lastPage },
     }),
   );
@@ -312,40 +310,39 @@ it("pages open pull requests and keeps one row when an item moves between lists"
   ]);
 });
 
-it("keeps the newest 1000 open issues and warns when more remain", async () => {
-  const page = (index: number) =>
-    response({
-      ...repository(),
-      openIssues: {
-        nodes: Array.from({ length: 100 }, (_, i) =>
-          node(index * 100 + i + 10),
-        ),
-        pageInfo: nextPage(`p${index + 1}`),
-      },
+it.each([
+  ["openIssues", "issue", "open issues"],
+  ["openPrs", "pr", "open pull requests"],
+] as const)(
+  "keeps the newest 1000 %s and warns when more remain",
+  async (alias, kind, label) => {
+    const page = (index: number) => ({
+      nodes: Array.from({ length: 100 }, (_, i) => node(index * 100 + i + 10)),
+      pageInfo: nextPage(`p${index + 1}`),
     });
-  fake.responses.set("one", page(0));
-  for (let index = 1; index < 11; index += 1)
-    fake.responses.set(`one@p${index}`, page(index));
-  const { harness } = await start();
-  await harness.behavior.callRpc("refresh");
-  const { items } = githubRpcContract.listItems.output.parse(
-    await harness.behavior.callRpc("listItems", {
-      kind: "issue",
-      state: "open",
-    }),
-  );
-  expect(items).toHaveLength(1000);
-  expect(
-    Math.max(...items.map((item: { number: number }) => item.number)),
-  ).toBe(1009);
-  expect(fake.calls.filter((args) => args[1] === "graphql")).toHaveLength(10);
-  expect(
-    harness.inspection.logEntries.filter((entry) => entry.level === "warn"),
-  ).toEqual([
-    {
-      level: "warn",
-      message:
-        "acme/one has more than 1000 open issues; keeping the newest 1000",
-    },
-  ]);
-});
+    fake.responses.set("one", response({ ...repository(), [alias]: page(0) }));
+    for (let index = 1; index < 11; index += 1)
+      fake.responses.set(`one@p${index}`, response({ [alias]: page(index) }));
+    const { harness } = await start();
+    await harness.behavior.callRpc("refresh");
+    const { items } = githubRpcContract.listItems.output.parse(
+      await harness.behavior.callRpc("listItems", {
+        kind,
+        state: "open",
+      }),
+    );
+    expect(items).toHaveLength(1000);
+    expect(
+      Math.max(...items.map((item: { number: number }) => item.number)),
+    ).toBe(1009);
+    expect(fake.calls.filter((args) => args[1] === "graphql")).toHaveLength(10);
+    expect(
+      harness.inspection.logEntries.filter((entry) => entry.level === "warn"),
+    ).toEqual([
+      {
+        level: "warn",
+        message: `acme/one has more than 1000 ${label}; keeping the newest 1000`,
+      },
+    ]);
+  },
+);
