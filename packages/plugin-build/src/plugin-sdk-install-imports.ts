@@ -1,36 +1,19 @@
-import { readFile } from "node:fs/promises";
+import { readFile, realpath } from "node:fs/promises";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { isPathWithinDirectory } from "@bb/process-utils";
-import { RUNTIME_SLOT_BY_SPECIFIER } from "./runtime-shims.mjs";
 import {
-  importedRuntimeNames,
-  PLUGIN_SDK_HOST_FALLBACK_EXPORTS,
-  PLUGIN_SDK_HOST_FALLBACK_SPECIFIER,
-  sourceImports,
-} from "./build-plugin-host.js";
-import { PLUGIN_SDK_ROOT_FILTER } from "./build-plugin-server.js";
+  isPluginSdkImportProvided,
+  type PluginEntryKind,
+} from "./plugin-sdk-runtime.js";
+import { sourceImports } from "./source-imports.js";
 import { isRecord, readPluginPackageJsonFile } from "./plugin-manifest.js";
 import { PLUGIN_SDK_PACKAGE_NAME } from "./plugin-sdk-install.js";
-
-type PluginEntryKind = "server" | "host" | "app";
 
 export interface PluginSdkInstallImport {
   entry: PluginEntryKind;
   file: string;
   specifier: string;
 }
-
-const PROVIDED_BY_BB: Record<
-  PluginEntryKind,
-  (specifier: string, names: readonly string[]) => boolean
-> = {
-  server: (specifier) => PLUGIN_SDK_ROOT_FILTER.test(specifier),
-  host: (specifier, names) =>
-    specifier === PLUGIN_SDK_PACKAGE_NAME ||
-    (specifier === PLUGIN_SDK_HOST_FALLBACK_SPECIFIER &&
-      names.every((name) => PLUGIN_SDK_HOST_FALLBACK_EXPORTS.has(name))),
-  app: (specifier) => Object.hasOwn(RUNTIME_SLOT_BY_SPECIFIER, specifier),
-};
 
 const SOURCE_FILE_PATTERN = /\.[cm]?[jt]sx?$/u;
 const SOURCE_EXTENSIONS = [
@@ -51,41 +34,43 @@ export async function findPluginSdkInstallImports(
     join(rootDir, "package.json"),
   );
   const bb = isRecord(manifest) && isRecord(manifest.bb) ? manifest.bb : {};
+  const pluginRoot = await realpath(rootDir);
   const found: PluginSdkInstallImport[] = [];
   for (const entry of ["server", "host", "app"] as const) {
     const entryPath = bb[entry];
     if (typeof entryPath !== "string") continue;
-    const pending = [resolve(rootDir, entryPath)];
+    const pending = [resolve(pluginRoot, entryPath)];
     const visited = new Set<string>();
-    while (pending.length > 0) {
-      const file = await readSourceFile(rootDir, pending.shift()!);
+    for (const path of pending) {
+      const file = await readSourceFile(pluginRoot, path);
       if (file === null || visited.has(file.path)) continue;
       visited.add(file.path);
       const imports = sourceImports(file.source);
-      for (const { specifier, clause } of imports) {
+      const reported = new Set<string>();
+      for (const { specifier, names } of imports) {
+        if (names.length === 0) continue;
         if (specifier.startsWith("./") || specifier.startsWith("../")) {
           pending.push(resolve(dirname(file.path), specifier));
           continue;
         }
+        const sdkSpecifier = specifier.replace(
+          /^@bb\/plugin-sdk(?=\/|$)/u,
+          PLUGIN_SDK_PACKAGE_NAME,
+        );
         if (
-          specifier !== PLUGIN_SDK_PACKAGE_NAME &&
-          !specifier.startsWith(`${PLUGIN_SDK_PACKAGE_NAME}/`)
+          sdkSpecifier !== PLUGIN_SDK_PACKAGE_NAME &&
+          !sdkSpecifier.startsWith(`${PLUGIN_SDK_PACKAGE_NAME}/`)
         ) {
           continue;
         }
-        const names = clause
-          ? importedRuntimeNames(file.source, specifier)
-          : ["*"];
-        if (names.length === 0 || PROVIDED_BY_BB[entry](specifier, names)) {
+        if (isPluginSdkImportProvided(entry, sdkSpecifier, names)) {
           continue;
         }
-        const relativeFile = relative(rootDir, file.path).split(sep).join("/");
-        if (
-          !found.some(
-            (item) =>
-              item.file === relativeFile && item.specifier === specifier,
-          )
-        ) {
+        const relativeFile = relative(pluginRoot, file.path)
+          .split(sep)
+          .join("/");
+        if (!reported.has(specifier)) {
+          reported.add(specifier);
           found.push({ entry, file: relativeFile, specifier });
         }
       }
@@ -107,12 +92,16 @@ async function readSourceFile(
   ]) {
     if (
       !SOURCE_FILE_PATTERN.test(candidate) ||
-      !isPathWithinDirectory(resolve(rootDir), candidate)
+      !isPathWithinDirectory(rootDir, candidate)
     ) {
       continue;
     }
-    const source = await readFile(candidate, "utf8").catch(() => null);
-    if (source !== null) return { path: candidate, source };
+    const sourcePath = await realpath(candidate).catch(() => null);
+    if (sourcePath === null || !isPathWithinDirectory(rootDir, sourcePath)) {
+      continue;
+    }
+    const source = await readFile(sourcePath, "utf8").catch(() => null);
+    if (source !== null) return { path: sourcePath, source };
   }
   return null;
 }

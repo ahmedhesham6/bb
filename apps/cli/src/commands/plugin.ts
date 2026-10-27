@@ -1648,10 +1648,12 @@ export function registerPluginCommands(
           "Refusing to migrate without confirmation — re-run with --yes to apply the plan above.",
           opts.yes ?? false,
         );
+        const confirmedSdkInDependencies =
+          (await findPluginSdkInstallImports(rootDir)).length > 0;
         const confirmedPlan = await migratePluginToPackageLayout({
           rootDir,
           sdkVersion: PLUGIN_SDK_VERSION,
-          sdkInDependencies,
+          sdkInDependencies: confirmedSdkInDependencies,
           dryRun: true,
         });
         if (!samePlan(plan, confirmedPlan)) {
@@ -1663,7 +1665,7 @@ export function registerPluginCommands(
         const applied = await migratePluginToPackageLayout({
           rootDir,
           sdkVersion: PLUGIN_SDK_VERSION,
-          sdkInDependencies,
+          sdkInDependencies: confirmedSdkInDependencies,
         });
         console.log("Migrated to the @get-bb/plugin-sdk npm package.");
         if (plan.removedTypesDir && !applied.removedTypesDir) {

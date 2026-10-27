@@ -153,6 +153,10 @@ describe("bb plugin migrate", () => {
     expect(await readFile(join(rootDir, "server.ts"), "utf8")).toBe(
       'import type { BbPluginApi } from "@get-bb/plugin-sdk";\nimport "@get-bb/plugin-sdk/testing";\n',
     );
+    expect((await readManifest()).dependencies).toEqual({
+      "@get-bb/plugin-sdk": PLUGIN_SDK_VERSION,
+    });
+    await runCommand(["plugin", "types", rootDir, "--check"], register);
   });
 
   it("reports an already-migrated plugin without touching it", async () => {
@@ -196,30 +200,44 @@ describe("bb plugin migrate", () => {
     );
   });
 
-  it("aborts when the plugin changes between the plan and the confirmation", async () => {
-    await writeVendoredPlugin();
-    setTty(true);
-    readlineMocks.question.mockImplementation(async () => {
-      await writeFile(
-        join(rootDir, "types", "bb-plugin-sdk-app.d.ts"),
-        "// appeared mid-prompt\n",
+  it.each(["declarations", "entry imports"])(
+    "aborts when %s change between the plan and the confirmation",
+    async (change) => {
+      await writeVendoredPlugin();
+      setTty(true);
+      readlineMocks.question.mockImplementation(async () => {
+        if (change === "declarations") {
+          await writeFile(
+            join(rootDir, "types", "bb-plugin-sdk-app.d.ts"),
+            "// appeared mid-prompt\n",
+          );
+        } else {
+          await writeFile(
+            join(rootDir, "server.ts"),
+            'import "@get-bb/plugin-sdk/process";',
+          );
+        }
+        return "y";
+      });
+      const before = await readFile(join(rootDir, "package.json"), "utf8");
+
+      await expect(
+        runCommand(["plugin", "migrate", rootDir], register),
+      ).rejects.toThrow("process.exit:1");
+
+      expect(vi.mocked(console.error).mock.calls.flat().join("\n")).toContain(
+        "changed while awaiting confirmation",
       );
-      return "y";
-    });
-    const before = await readFile(join(rootDir, "package.json"), "utf8");
-
-    await expect(
-      runCommand(["plugin", "migrate", rootDir], register),
-    ).rejects.toThrow("process.exit:1");
-
-    expect(vi.mocked(console.error).mock.calls.flat().join("\n")).toContain(
-      "changed while awaiting confirmation",
-    );
-    expect(await readFile(join(rootDir, "package.json"), "utf8")).toBe(before);
-    expect(
-      await stat(join(rootDir, "types", "bb-plugin-sdk.d.ts")).then(() => true),
-    ).toBe(true);
-  });
+      expect(await readFile(join(rootDir, "package.json"), "utf8")).toBe(
+        before,
+      );
+      expect(
+        await stat(join(rootDir, "types", "bb-plugin-sdk.d.ts")).then(
+          () => true,
+        ),
+      ).toBe(true);
+    },
+  );
 });
 
 describe("bb plugin dev stale-pin warning", () => {
