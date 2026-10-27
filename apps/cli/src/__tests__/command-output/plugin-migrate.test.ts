@@ -331,6 +331,70 @@ describe("legacy vendored SDK layout", () => {
 });
 
 describe("bb plugin types on a package-layout plugin", () => {
+  async function writeHostPlugin(
+    field: "dependencies" | "devDependencies",
+    hostSource: string,
+  ): Promise<void> {
+    await writeManifest({
+      name: "bb-plugin-provider",
+      bb: { server: "./server.ts", host: "./host.ts" },
+      [field]: { "@get-bb/plugin-sdk": PLUGIN_SDK_VERSION },
+    });
+    await writeFile(join(rootDir, "server.ts"), "export default () => {};\n");
+    await writeFile(join(rootDir, "host.ts"), hostSource);
+  }
+
+  const providerBridgeHost =
+    'import { experimental_defineProviderBridge } from "@get-bb/plugin-sdk/provider-bridge";\nexport const bridge = experimental_defineProviderBridge;\n';
+
+  it("keeps the SDK in dependencies when the host entry imports the provider bridge", async () => {
+    await writeHostPlugin("dependencies", providerBridgeHost);
+    const before = await readFile(join(rootDir, "package.json"), "utf8");
+
+    await runCommand(["plugin", "types", rootDir, "--check"], register);
+    await runCommand(["plugin", "types", rootDir], register);
+
+    expect(await readFile(join(rootDir, "package.json"), "utf8")).toBe(before);
+  });
+
+  it("--check asks to move a provider-bridge SDK pin to dependencies", async () => {
+    await writeHostPlugin("devDependencies", providerBridgeHost);
+
+    await expect(
+      runCommand(["plugin", "types", rootDir, "--check"], register),
+    ).rejects.toThrow("process.exit:1");
+
+    expect(vi.mocked(console.error).mock.calls.flat().join("\n")).toContain(
+      'Move "@get-bb/plugin-sdk" to dependencies — host.ts imports "@get-bb/plugin-sdk/provider-bridge", which the build bundles from the plugin\'s own SDK install, and Git installs omit devDependencies (`bb plugin types` does it for you).',
+    );
+
+    await runCommand(["plugin", "types", rootDir], register);
+
+    const manifest = await readManifest();
+    expect(manifest.dependencies).toEqual({
+      "@get-bb/plugin-sdk": PLUGIN_SDK_VERSION,
+    });
+    expect(manifest.devDependencies).toBeUndefined();
+    expect(collectLogPayloads(vi.mocked(console.log)).join("\n")).toContain(
+      "Moved @get-bb/plugin-sdk from devDependencies to dependencies.",
+    );
+  });
+
+  it("still moves a stub-only host entry's SDK pin to devDependencies", async () => {
+    await writeHostPlugin(
+      "dependencies",
+      'import { experimental_defineHostEntry } from "@get-bb/plugin-sdk/host";\nexport default experimental_defineHostEntry;\n',
+    );
+
+    await runCommand(["plugin", "types", rootDir], register);
+
+    const manifest = await readManifest();
+    expect(manifest.dependencies).toBeUndefined();
+    expect(manifest.devDependencies).toEqual({
+      "@get-bb/plugin-sdk": PLUGIN_SDK_VERSION,
+    });
+  });
+
   it("repoints an outdated pin to the running host's SDK version", async () => {
     await writeManifest({
       name: "bb-plugin-modern",
