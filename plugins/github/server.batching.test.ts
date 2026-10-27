@@ -44,12 +44,16 @@ function node(number: number, state = "OPEN") {
     updatedAt: "2026-09-10T00:00:00Z",
   };
 }
+const lastPage = { hasNextPage: false, endCursor: null };
+function nextPage(endCursor: string) {
+  return { hasNextPage: true, endCursor };
+}
 function repository() {
   return {
     hasIssuesEnabled: true,
-    openIssues: { nodes: [node(1)] },
+    openIssues: { nodes: [node(1)], pageInfo: lastPage },
     closedIssues: { nodes: [node(2, "CLOSED")] },
-    openPrs: { nodes: [node(3)] },
+    openPrs: { nodes: [node(3)], pageInfo: lastPage },
     closedPrs: { nodes: [node(4, "CLOSED"), node(5, "MERGED")] },
   };
 }
@@ -134,6 +138,7 @@ it("accepts deleted authors and empty connections, discards disabled issues, and
           assignees: { nodes: [] },
         },
       ],
+      pageInfo: lastPage,
     },
     closedPrs: { nodes: [] },
   };
@@ -149,9 +154,9 @@ it("accepts deleted authors and empty connections, discards disabled issues, and
     "one",
     response({
       hasIssuesEnabled: true,
-      openIssues: { nodes: [] },
+      openIssues: { nodes: [], pageInfo: lastPage },
       closedIssues: { nodes: [] },
-      openPrs: { nodes: [] },
+      openPrs: { nodes: [], pageInfo: lastPage },
       closedPrs: { nodes: [] },
     }),
   );
@@ -193,7 +198,14 @@ it.each([
     "malformed node",
     response({
       ...repository(),
-      openIssues: { nodes: [{ ...node(1), number: -1 }] },
+      openIssues: { nodes: [{ ...node(1), number: -1 }], pageInfo: lastPage },
+    }),
+  ],
+  [
+    "failed follow-up page",
+    response({
+      ...repository(),
+      openPrs: { nodes: [node(3)], pageInfo: nextPage("unanswered") },
     }),
   ],
 ])(
@@ -223,7 +235,7 @@ it.each([
   },
 );
 
-it.fails("stores open issues beyond the first page", async () => {
+it("stores open issues beyond the first page", async () => {
   fake.responses.set(
     "one",
     response({
@@ -254,5 +266,86 @@ it.fails("stores open issues beyond the first page", async () => {
   );
   expect(items.map((item: { number: number }) => item.number).sort()).toEqual([
     1, 6,
+  ]);
+});
+
+it("pages open pull requests and keeps one row when an item moves between lists", async () => {
+  fake.responses.set(
+    "one",
+    response({
+      ...repository(),
+      openPrs: {
+        nodes: [node(3)],
+        pageInfo: nextPage(
+          "Y3Vyc29yOnYyOpK0MjAyNi0wNy0wOVQwNzo1NzoyNVrPAAAAASC_YbE=",
+        ),
+      },
+    }),
+  );
+  fake.responses.set(
+    "one@Y3Vyc29yOnYyOpK0MjAyNi0wNy0wOVQwNzo1NzoyNVrPAAAAASC_YbE=",
+    response({
+      ...repository(),
+      openPrs: { nodes: [node(4), node(7)], pageInfo: lastPage },
+    }),
+  );
+  const { harness } = await start();
+  expect(await harness.behavior.callRpc("refresh")).toEqual({
+    repos: 1,
+    items: 6,
+  });
+  const { items } = githubRpcContract.listItems.output.parse(
+    await harness.behavior.callRpc("listItems", { kind: "pr" }),
+  );
+  expect(
+    items
+      .map((item: { number: number; state: string }) => [
+        item.number,
+        item.state,
+      ])
+      .sort(),
+  ).toEqual([
+    [3, "OPEN"],
+    [4, "OPEN"],
+    [5, "MERGED"],
+    [7, "OPEN"],
+  ]);
+});
+
+it("keeps the newest 1000 open issues and warns when more remain", async () => {
+  const page = (index: number) =>
+    response({
+      ...repository(),
+      openIssues: {
+        nodes: Array.from({ length: 100 }, (_, i) =>
+          node(index * 100 + i + 10),
+        ),
+        pageInfo: nextPage(`p${index + 1}`),
+      },
+    });
+  fake.responses.set("one", page(0));
+  for (let index = 1; index < 11; index += 1)
+    fake.responses.set(`one@p${index}`, page(index));
+  const { harness } = await start();
+  await harness.behavior.callRpc("refresh");
+  const { items } = githubRpcContract.listItems.output.parse(
+    await harness.behavior.callRpc("listItems", {
+      kind: "issue",
+      state: "open",
+    }),
+  );
+  expect(items).toHaveLength(1000);
+  expect(
+    Math.max(...items.map((item: { number: number }) => item.number)),
+  ).toBe(1009);
+  expect(fake.calls.filter((args) => args[1] === "graphql")).toHaveLength(10);
+  expect(
+    harness.inspection.logEntries.filter((entry) => entry.level === "warn"),
+  ).toEqual([
+    {
+      level: "warn",
+      message:
+        "acme/one has more than 1000 open issues; keeping the newest 1000",
+    },
   ]);
 });
