@@ -83,10 +83,10 @@ async function readSourceFile(
   rootDir: string,
   path: string,
 ): Promise<{ path: string; source: string } | null> {
-  const typescriptPath = path.replace(/\.([cm]?)js(x?)$/u, ".$1ts$2");
   for (const candidate of [
     path,
-    typescriptPath,
+    path.replace(/\.([cm]?)jsx?$/u, ".$1ts"),
+    path.replace(/\.jsx?$/u, ".tsx"),
     ...SOURCE_EXTENSIONS.map((extension) => `${path}${extension}`),
     ...SOURCE_EXTENSIONS.map((extension) => join(path, `index${extension}`)),
   ]) {

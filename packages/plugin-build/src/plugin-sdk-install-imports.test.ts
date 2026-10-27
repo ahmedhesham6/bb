@@ -119,7 +119,9 @@ describe("findPluginSdkInstallImports", () => {
       "contract/index.ts":
         'export { experimental_nativeRootsHostContract } from "@get-bb/plugin-sdk/host";\n',
       "app.tsx":
-        'import { definePluginApp } from "@get-bb/plugin-sdk/app";\nimport { createTestApp } from "@get-bb/plugin-sdk/testing/app";\nexport default definePluginApp(createTestApp);\n',
+        'import { definePluginApp } from "@get-bb/plugin-sdk/app";\nimport { createTestApp } from "./panel.js";\nexport default definePluginApp(createTestApp);\n',
+      "panel.tsx":
+        'export { createTestApp } from "@get-bb/plugin-sdk/testing/app";\n',
     });
 
     await expect(findPluginSdkInstallImports(dir)).resolves.toEqual([
@@ -135,7 +137,7 @@ describe("findPluginSdkInstallImports", () => {
       },
       {
         entry: "app",
-        file: "app.tsx",
+        file: "panel.tsx",
         specifier: "@get-bb/plugin-sdk/testing/app",
       },
     ]);
