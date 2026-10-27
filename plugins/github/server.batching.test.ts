@@ -286,20 +286,12 @@ it("stores open issues beyond the first page", async () => {
     "one",
     response({
       ...repository(),
-      openIssues: {
-        nodes: [node(1)],
-        pageInfo: { hasNextPage: true, endCursor: "c1" },
-      },
+      openIssues: { nodes: [node(1)], pageInfo: nextPage("c1") },
     }),
   );
   fake.responses.set(
     "one@c1",
-    response({
-      openIssues: {
-        nodes: [node(6)],
-        pageInfo: { hasNextPage: false, endCursor: "c2" },
-      },
-    }),
+    response({ openIssues: { nodes: [node(6)], pageInfo: lastPage } }),
   );
   const { harness } = await start();
   await harness.behavior.callRpc("refresh");

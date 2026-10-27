@@ -500,7 +500,7 @@ const openLists = {
 async function fetchRepoItems(
   gh: GhRunner,
   repo: string,
-  warn: (message: string) => void,
+  log: Pick<BbPluginApi["log"], "warn">,
 ): Promise<CachedItem[]> {
   const [owner, name] = repoNameSchema.parse(repo).split("/");
   const graphql = (query: string, ...fields: string[]) =>
@@ -540,7 +540,7 @@ async function fetchRepoItems(
     const nodes = [...page.nodes];
     for (let pages = 1; page.pageInfo.hasNextPage; pages += 1) {
       if (pages === OPEN_PAGE_LIMIT) {
-        warn(
+        log.warn(
           `${repo} has more than ${nodes.length} ${label}; keeping the newest ${nodes.length}`,
         );
         break;
@@ -905,7 +905,7 @@ export default async function plugin(bb: BbPluginApi) {
         const items = await fetchRepoItems(
           (args) => gh(args, undefined, "background"),
           repo,
-          (message) => bb.log.warn(message),
+          bb.log,
         );
         replaceRepoRows(repo, items);
         total += items.length;
@@ -1580,9 +1580,7 @@ export default async function plugin(bb: BbPluginApi) {
       try {
         replaceRepoRows(
           input.repo,
-          await fetchRepoItems(gh, input.repo, (message) =>
-            bb.log.warn(message),
-          ),
+          await fetchRepoItems(gh, input.repo, bb.log),
         );
         bb.realtime.publish("data-changed", {});
       } catch {}
