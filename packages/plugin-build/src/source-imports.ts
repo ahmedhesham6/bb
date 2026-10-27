@@ -73,6 +73,7 @@ function sourceTokens(source: string): SourceToken[] {
 
 interface SourceImport {
   specifier: string;
+  fromClause: boolean;
   names: string[];
 }
 
@@ -92,6 +93,7 @@ export function sourceImports(source: string): SourceImport[] {
     ) {
       imports.push({
         specifier: token.value,
+        fromClause: previous === "from",
         names: importedNames(tokens, index),
       });
     }

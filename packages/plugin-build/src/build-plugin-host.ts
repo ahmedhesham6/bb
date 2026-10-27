@@ -245,7 +245,10 @@ export async function buildPluginHost(
                 importerSource === null
                   ? []
                   : sourceImports(importerSource)
-                      .filter((entry) => entry.specifier === args.path)
+                      .filter(
+                        (entry) =>
+                          entry.fromClause && entry.specifier === args.path,
+                      )
                       .flatMap((entry) => entry.names)
                       .filter(
                         (name) =>
