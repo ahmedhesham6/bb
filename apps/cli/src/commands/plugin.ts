@@ -41,6 +41,7 @@ import {
   buildPluginHost,
   buildPluginServer,
   createPluginDevLoop,
+  findPluginSdkInstallImports,
   PLUGIN_TOOLCHAIN_PINS,
   resolvePluginBuildToolchain,
   type PluginBuildToolchain,
@@ -207,12 +208,12 @@ function warnIfSdkPinIsStale(pin: string | null): void {
 function printMigrationPlan(plan: PluginPackageLayoutMigration): void {
   if (plan.pin !== null) {
     console.log(
-      `  package.json   devDependencies "@get-bb/plugin-sdk": ${plan.pin.from ?? "(none)"} → ${plan.pin.to}`,
+      `  package.json   ${plan.sdkField} "@get-bb/plugin-sdk": ${plan.pin.from ?? "(none)"} → ${plan.pin.to}`,
     );
   }
-  if (plan.movedFromDependencies) {
+  if (plan.sdkMoved) {
     console.log(
-      '  package.json   move "@get-bb/plugin-sdk" from dependencies to devDependencies',
+      `  package.json   move "@get-bb/plugin-sdk" from ${otherSdkField(plan.sdkField)} to ${plan.sdkField}`,
     );
   }
   if (plan.enginesFloor !== null) {
@@ -237,6 +238,12 @@ function printMigrationPlan(plan: PluginPackageLayoutMigration): void {
       `  rewrite        ${file.path} (${file.imports} import${file.imports === 1 ? "" : "s"} of "@bb/plugin-sdk" → "@get-bb/plugin-sdk")`,
     );
   }
+}
+
+function otherSdkField(
+  field: "dependencies" | "devDependencies",
+): "dependencies" | "devDependencies" {
+  return field === "dependencies" ? "devDependencies" : "dependencies";
 }
 
 function samePlan(
@@ -1507,7 +1514,7 @@ export function registerPluginCommands(
   plugin
     .command("types [path]")
     .description(
-      "Sync a package-layout plugin's @get-bb/plugin-sdk surface to the running bb (default: cwd): repin the npm devDependency and the declared type-only devDependencies of the packages bb shims at runtime (sonner, vaul, the portal radix families, ...); legacy vendored-layout plugins must migrate first",
+      "Sync a package-layout plugin's @get-bb/plugin-sdk surface to the running bb (default: cwd): repin the npm package (in dependencies when an entry imports an SDK subpath the build bundles from the plugin's own install, such as @get-bb/plugin-sdk/provider-bridge, since Git installs omit devDependencies; otherwise in devDependencies) and the declared type-only devDependencies of the packages bb shims at runtime (sonner, vaul, the portal radix families, ...); legacy vendored-layout plugins must migrate first",
     )
     .option(
       "--check",
@@ -1524,6 +1531,8 @@ export function registerPluginCommands(
           process.exit(1);
         }
         if (layout.kind === "package") {
+          const [installImport] = await findPluginSdkInstallImports(rootDir);
+          const sdkInDependencies = installImport !== undefined;
           if (opts.check) {
             console.log(
               `This plugin uses the npm package @get-bb/plugin-sdk; pin is ${layout.pin ?? "not declared"}, host is ${PLUGIN_SDK_VERSION}.`,
@@ -1531,6 +1540,7 @@ export function registerPluginCommands(
             const pending = await setPluginSdkPin({
               rootDir,
               sdkVersion: PLUGIN_SDK_VERSION,
+              sdkInDependencies,
               dryRun: true,
             });
             if (pending === null) {
@@ -1539,11 +1549,20 @@ export function registerPluginCommands(
               );
               return;
             }
-            if (pending.pin !== null || pending.movedFromDependencies) {
+            if (
+              installImport !== undefined &&
+              (pending.sdkMoved || pending.pin?.from === null)
+            ) {
               console.error(
-                pending.pin === null
-                  ? 'Move "@get-bb/plugin-sdk" from dependencies to devDependencies — bb provides its runtime (`bb plugin types` does it for you).'
-                  : `Set "@get-bb/plugin-sdk" to ${PLUGIN_SDK_VERSION} in devDependencies and re-run npm install (\`bb plugin types\` does it for you).`,
+                `Move "@get-bb/plugin-sdk" to dependencies — ${installImport.file} imports "${installImport.specifier}", which the build bundles from the plugin's own SDK install, and Git installs omit devDependencies (\`bb plugin types\` does it for you).`,
+              );
+            } else if (pending.pin !== null) {
+              console.error(
+                `Set "@get-bb/plugin-sdk" to ${PLUGIN_SDK_VERSION} in ${pending.sdkField} and re-run npm install (\`bb plugin types\` does it for you).`,
+              );
+            } else if (pending.sdkMoved) {
+              console.error(
+                'Move "@get-bb/plugin-sdk" from dependencies to devDependencies — bb provides its runtime (`bb plugin types` does it for you).',
               );
             }
             for (const shim of pending.shimmedTypePins) {
@@ -1558,6 +1577,7 @@ export function registerPluginCommands(
           const changed = await setPluginSdkPin({
             rootDir,
             sdkVersion: PLUGIN_SDK_VERSION,
+            sdkInDependencies,
           });
           if (changed === null) {
             console.log(
@@ -1570,12 +1590,12 @@ export function registerPluginCommands(
           }
           if (changed.pin !== null) {
             console.log(
-              `@get-bb/plugin-sdk: ${changed.pin.from ?? "(not declared)"} → ${changed.pin.to} in devDependencies.`,
+              `@get-bb/plugin-sdk: ${changed.pin.from ?? "(not declared)"} → ${changed.pin.to} in ${changed.sdkField}.`,
             );
           }
-          if (changed.movedFromDependencies) {
+          if (changed.sdkMoved) {
             console.log(
-              "Moved @get-bb/plugin-sdk from dependencies to devDependencies.",
+              `Moved @get-bb/plugin-sdk from ${otherSdkField(changed.sdkField)} to ${changed.sdkField}.`,
             );
           }
           for (const shim of changed.shimmedTypePins) {
@@ -1595,7 +1615,7 @@ export function registerPluginCommands(
   plugin
     .command("migrate [path]")
     .description(
-      "Switch a plugin that vendors types/ to the @get-bb/plugin-sdk npm package (default: cwd): pin the devDependency, drop the tsconfig path map, delete the vendored declarations, and rewrite pre-rename @bb/plugin-sdk imports in the plugin's sources; prints the plan and asks first",
+      "Switch a plugin that vendors types/ to the @get-bb/plugin-sdk npm package (default: cwd): pin the SDK where `bb plugin types` would, drop the tsconfig path map, delete the vendored declarations, and rewrite pre-rename @bb/plugin-sdk imports in the plugin's sources; prints the plan and asks first",
     )
     .option("--yes", "Skip the confirmation prompt")
     .action(
@@ -1603,9 +1623,12 @@ export function registerPluginCommands(
         const rootDir = resolve(process.cwd(), path ?? ".");
         await requirePluginManifest(rootDir);
         const layout = await resolvePluginSdkLayout(rootDir);
+        const sdkInDependencies =
+          (await findPluginSdkInstallImports(rootDir)).length > 0;
         const plan = await migratePluginToPackageLayout({
           rootDir,
           sdkVersion: PLUGIN_SDK_VERSION,
+          sdkInDependencies,
           dryRun: true,
         });
         if (!plan.changed) {
@@ -1628,6 +1651,7 @@ export function registerPluginCommands(
         const confirmedPlan = await migratePluginToPackageLayout({
           rootDir,
           sdkVersion: PLUGIN_SDK_VERSION,
+          sdkInDependencies,
           dryRun: true,
         });
         if (!samePlan(plan, confirmedPlan)) {
@@ -1639,6 +1663,7 @@ export function registerPluginCommands(
         const applied = await migratePluginToPackageLayout({
           rootDir,
           sdkVersion: PLUGIN_SDK_VERSION,
+          sdkInDependencies,
         });
         console.log("Migrated to the @get-bb/plugin-sdk npm package.");
         if (plan.removedTypesDir && !applied.removedTypesDir) {

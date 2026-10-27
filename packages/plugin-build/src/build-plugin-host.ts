@@ -49,8 +49,8 @@ export const PLUGIN_CLI_OUTPUT_MAX_BYTES = 32 * 1024 * 1024;
 export function defineRpcContract(contract) { return contract; }
 ${PLUGIN_SDK_DEFINE_HOST_ENTRY_RUNTIME}`;
 
-const PLUGIN_SDK_HOST_FALLBACK_SPECIFIER = "@get-bb/plugin-sdk/host";
-const PLUGIN_SDK_HOST_FALLBACK_EXPORTS: ReadonlySet<string> = new Set([
+export const PLUGIN_SDK_HOST_FALLBACK_SPECIFIER = "@get-bb/plugin-sdk/host";
+export const PLUGIN_SDK_HOST_FALLBACK_EXPORTS: ReadonlySet<string> = new Set([
   "experimental_defineHostEntry",
 ]);
 const PLUGIN_SDK_HOST_FALLBACK_NAMESPACE = "bb-host-sdk-fallback";
@@ -132,9 +132,11 @@ function sourceTokens(source: string): SourceToken[] {
   return tokens;
 }
 
-function sourceImportSpecifiers(source: string): string[] {
+export function sourceImports(
+  source: string,
+): { specifier: string; clause: boolean }[] {
   const tokens = sourceTokens(source);
-  const specifiers: string[] = [];
+  const imports: { specifier: string; clause: boolean }[] = [];
   for (let index = 0; index < tokens.length; index += 1) {
     const token = tokens[index];
     if (token?.kind !== "string") continue;
@@ -146,13 +148,20 @@ function sourceImportSpecifiers(source: string): string[] {
       callee === "import" ||
       callee === "require"
     ) {
-      specifiers.push(token.value);
+      imports.push({ specifier: token.value, clause: previous === "from" });
     }
   }
-  return specifiers;
+  return imports;
 }
 
-function importedRuntimeNames(source: string, specifier: string): string[] {
+function sourceImportSpecifiers(source: string): string[] {
+  return sourceImports(source).map((entry) => entry.specifier);
+}
+
+export function importedRuntimeNames(
+  source: string,
+  specifier: string,
+): string[] {
   const tokens = sourceTokens(source);
   const names: string[] = [];
   for (let index = 0; index < tokens.length; index += 1) {

@@ -37,7 +37,7 @@ export const PLUGIN_SERVER_EXTERNALS: readonly string[] = [
   "better-sqlite3",
 ];
 
-const PLUGIN_SDK_ROOT_FILTER = /^@get-bb\/plugin-sdk$|^@bb\/plugin-sdk$/;
+export const PLUGIN_SDK_ROOT_FILTER = /^@get-bb\/plugin-sdk$|^@bb\/plugin-sdk$/;
 const PLUGIN_SDK_SUBPATH_FILTER = /^@get-bb\/plugin-sdk\//;
 const PLUGIN_SDK_SUBPATH_RESOLVE_MARK = "bb-server-sdk-subpath";
 const PLUGIN_RUNTIME_FALLBACK_RESOLVE_MARK = "bb-server-runtime-fallback";
