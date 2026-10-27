@@ -10,7 +10,6 @@ export {
 export { buildPluginHost } from "./build-plugin-host.js";
 export { pluginBuildCodeDigest } from "./code-digest.js";
 export { findPluginSdkInstallImports } from "./plugin-sdk-install-imports.js";
-export { isPluginSdkImportProvided } from "./plugin-sdk-runtime.js";
 export * from "./plugin-dev-loop.js";
 export {
   PLUGIN_TOOLCHAIN_PINS,

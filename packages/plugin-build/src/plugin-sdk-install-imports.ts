@@ -7,7 +7,6 @@ import {
 } from "./plugin-sdk-runtime.js";
 import { sourceImports } from "./source-imports.js";
 import { isRecord, readPluginPackageJsonFile } from "./plugin-manifest.js";
-import { PLUGIN_SDK_PACKAGE_NAME } from "./plugin-sdk-install.js";
 
 export interface PluginSdkInstallImport {
   entry: PluginEntryKind;
@@ -45,31 +44,20 @@ export async function findPluginSdkInstallImports(
       const file = await readSourceFile(pluginRoot, path);
       if (file === null || visited.has(file.path)) continue;
       visited.add(file.path);
-      const imports = sourceImports(file.source);
+      const relativeFile = relative(pluginRoot, file.path).split(sep).join("/");
       const reported = new Set<string>();
-      for (const { specifier, names } of imports) {
+      for (const { specifier, names } of sourceImports(file.source)) {
         if (names.length === 0) continue;
         if (specifier.startsWith("./") || specifier.startsWith("../")) {
           pending.push(resolve(dirname(file.path), specifier));
           continue;
         }
-        const sdkSpecifier = specifier.replace(
-          /^@bb\/plugin-sdk(?=\/|$)/u,
-          PLUGIN_SDK_PACKAGE_NAME,
-        );
+        if (!/^@(?:get-)?bb\/plugin-sdk(?:\/|$)/u.test(specifier)) continue;
+        const sdkSpecifier = specifier.replace(/^@bb\//u, "@get-bb/");
         if (
-          sdkSpecifier !== PLUGIN_SDK_PACKAGE_NAME &&
-          !sdkSpecifier.startsWith(`${PLUGIN_SDK_PACKAGE_NAME}/`)
+          !isPluginSdkImportProvided(entry, sdkSpecifier, names) &&
+          !reported.has(specifier)
         ) {
-          continue;
-        }
-        if (isPluginSdkImportProvided(entry, sdkSpecifier, names)) {
-          continue;
-        }
-        const relativeFile = relative(pluginRoot, file.path)
-          .split(sep)
-          .join("/");
-        if (!reported.has(specifier)) {
           reported.add(specifier);
           found.push({ entry, file: relativeFile, specifier });
         }
