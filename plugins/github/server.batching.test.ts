@@ -19,7 +19,10 @@ vi.mock("@get-bb/plugin-sdk/process", () => ({
       return callback(null, "ok", "");
     expect(options).toEqual({ timeout: 30_000, maxBuffer: 16 * 1024 * 1024 });
     const name = args.find((arg) => arg.startsWith("name="))?.slice(5);
-    const response = fake.responses.get(name ?? "");
+    const after = args.find((arg) => arg.startsWith("after="))?.slice(6);
+    const response = fake.responses.get(
+      after === undefined ? (name ?? "") : `${name}@${after}`,
+    );
     if (response === undefined)
       return callback(new Error("unexpected command"), "", "");
     if (response instanceof Error)
@@ -50,7 +53,7 @@ function repository() {
     closedPrs: { nodes: [node(4, "CLOSED"), node(5, "MERGED")] },
   };
 }
-function response(repo = repository()) {
+function response(repo: object = repository()) {
   return JSON.stringify({ data: { repository: repo } });
 }
 const hosts: ReturnType<typeof createFakePluginHost>[] = [];
@@ -219,3 +222,37 @@ it.each([
     ).toEqual({ n: 10 });
   },
 );
+
+it("stores open issues beyond the first page", async () => {
+  fake.responses.set(
+    "one",
+    response({
+      ...repository(),
+      openIssues: {
+        nodes: [node(1)],
+        pageInfo: { hasNextPage: true, endCursor: "c1" },
+      },
+    }),
+  );
+  fake.responses.set(
+    "one@c1",
+    response({
+      ...repository(),
+      openIssues: {
+        nodes: [node(6)],
+        pageInfo: { hasNextPage: false, endCursor: "c2" },
+      },
+    }),
+  );
+  const { harness } = await start();
+  await harness.behavior.callRpc("refresh");
+  const { items } = githubRpcContract.listItems.output.parse(
+    await harness.behavior.callRpc("listItems", {
+      kind: "issue",
+      state: "open",
+    }),
+  );
+  expect(items.map((item: { number: number }) => item.number).sort()).toEqual([
+    1, 6,
+  ]);
+});
