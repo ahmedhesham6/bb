@@ -42,6 +42,7 @@ import {
   buildPluginServer,
   createPluginDevLoop,
   findPluginSdkInstallImports,
+  type PluginSdkInstallImport,
   PLUGIN_TOOLCHAIN_PINS,
   resolvePluginBuildToolchain,
   type PluginBuildToolchain,
@@ -211,9 +212,13 @@ function printMigrationPlan(plan: PluginPackageLayoutMigration): void {
       `  package.json   ${plan.sdkField} "@get-bb/plugin-sdk": ${plan.pin.from ?? "(none)"} → ${plan.pin.to}`,
     );
   }
-  if (plan.sdkMoved) {
+  if (plan.sdkRelocation === "moved") {
     console.log(
       `  package.json   move "@get-bb/plugin-sdk" from ${otherSdkField(plan.sdkField)} to ${plan.sdkField}`,
+    );
+  } else if (plan.sdkRelocation === "deduplicated") {
+    console.log(
+      `  package.json   remove the duplicate "@get-bb/plugin-sdk" from ${otherSdkField(plan.sdkField)} (kept in ${plan.sdkField})`,
     );
   }
   if (plan.enginesFloor !== null) {
@@ -244,6 +249,34 @@ function otherSdkField(
   field: "dependencies" | "devDependencies",
 ): "dependencies" | "devDependencies" {
   return field === "dependencies" ? "devDependencies" : "dependencies";
+}
+
+function describePendingSdkPin(
+  pending: NonNullable<Awaited<ReturnType<typeof setPluginSdkPin>>>,
+  installImport: PluginSdkInstallImport | undefined,
+): string | null {
+  const field = pending.sdkField;
+  const other = otherSdkField(field);
+  const reason =
+    installImport === undefined
+      ? "bb provides its runtime"
+      : `${installImport.file} imports "${installImport.specifier}", which the build bundles from the plugin's own SDK install, and Git installs omit devDependencies`;
+  const fix = "(`bb plugin types` does it for you)";
+  switch (pending.sdkRelocation) {
+    case "moved":
+      return pending.pin === null
+        ? `Move "@get-bb/plugin-sdk" from ${other} to ${field} — ${reason} ${fix}.`
+        : `Move "@get-bb/plugin-sdk" from ${other} to ${field} at ${pending.pin.to} and re-run npm install — ${reason} ${fix}.`;
+    case "deduplicated":
+      return pending.pin === null
+        ? `Remove the duplicate "@get-bb/plugin-sdk" from ${other}; keep it in ${field} — ${reason} ${fix}.`
+        : `Remove the duplicate "@get-bb/plugin-sdk" from ${other}, set it to ${pending.pin.to} in ${field}, and re-run npm install — ${reason} ${fix}.`;
+    case "none":
+      if (pending.pin === null) return null;
+      return installImport !== undefined && pending.pin.from === null
+        ? `Add "@get-bb/plugin-sdk" ${pending.pin.to} to ${field} and run npm install — ${reason} ${fix}.`
+        : `Set "@get-bb/plugin-sdk" to ${pending.pin.to} in ${field} and re-run npm install ${fix}.`;
+  }
 }
 
 function samePlan(
@@ -1549,22 +1582,8 @@ export function registerPluginCommands(
               );
               return;
             }
-            if (
-              installImport !== undefined &&
-              (pending.sdkMoved || pending.pin?.from === null)
-            ) {
-              console.error(
-                `Move "@get-bb/plugin-sdk" to dependencies — ${installImport.file} imports "${installImport.specifier}", which the build bundles from the plugin's own SDK install, and Git installs omit devDependencies (\`bb plugin types\` does it for you).`,
-              );
-            } else if (pending.pin !== null) {
-              console.error(
-                `Set "@get-bb/plugin-sdk" to ${PLUGIN_SDK_VERSION} in ${pending.sdkField} and re-run npm install (\`bb plugin types\` does it for you).`,
-              );
-            } else if (pending.sdkMoved) {
-              console.error(
-                'Move "@get-bb/plugin-sdk" from dependencies to devDependencies — bb provides its runtime (`bb plugin types` does it for you).',
-              );
-            }
+            const sdkPinFix = describePendingSdkPin(pending, installImport);
+            if (sdkPinFix !== null) console.error(sdkPinFix);
             for (const shim of pending.shimmedTypePins) {
               console.error(
                 shim.movedFromDependencies
@@ -1593,9 +1612,13 @@ export function registerPluginCommands(
               `@get-bb/plugin-sdk: ${changed.pin.from ?? "(not declared)"} → ${changed.pin.to} in ${changed.sdkField}.`,
             );
           }
-          if (changed.sdkMoved) {
+          if (changed.sdkRelocation === "moved") {
             console.log(
               `Moved @get-bb/plugin-sdk from ${otherSdkField(changed.sdkField)} to ${changed.sdkField}.`,
+            );
+          } else if (changed.sdkRelocation === "deduplicated") {
+            console.log(
+              `Removed the duplicate @get-bb/plugin-sdk from ${otherSdkField(changed.sdkField)}; it stays in ${changed.sdkField}.`,
             );
           }
           for (const shim of changed.shimmedTypePins) {

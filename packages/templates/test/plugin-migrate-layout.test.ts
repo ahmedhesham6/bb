@@ -233,7 +233,7 @@ describe("migratePluginToPackageLayout", () => {
       changed: false,
       pin: null,
       sdkField: "devDependencies",
-      sdkMoved: false,
+      sdkRelocation: "none",
       enginesFloor: null,
       removedPathMaps: [],
       removedIncludes: [],
@@ -347,7 +347,7 @@ describe("migratePluginToPackageLayout", () => {
     });
 
     expect(result.changed).toBe(true);
-    expect(result.sdkMoved).toBe(true);
+    expect(result.sdkRelocation).toBe("deduplicated");
     const manifest = await readJson(join(rootDir, "package.json"));
     expect(manifest.dependencies).toEqual({ zod: "^4.3.6" });
     expect(manifest.devDependencies).toEqual({
@@ -614,7 +614,7 @@ describe("setPluginSdkPin", () => {
     expect(result).toEqual({
       pin: { from: "0.2.0", to: SDK_VERSION },
       sdkField: "devDependencies",
-      sdkMoved: false,
+      sdkRelocation: "none",
       shimmedTypePins: [],
     });
     const manifest = await readJson(join(rootDir, "package.json"));
@@ -658,7 +658,7 @@ describe("setPluginSdkPin", () => {
     expect(result).toEqual({
       pin: null,
       sdkField: "devDependencies",
-      sdkMoved: true,
+      sdkRelocation: "moved",
       shimmedTypePins: [],
     });
     const manifest = await readJson(join(rootDir, "package.json"));
@@ -702,7 +702,7 @@ describe("setPluginSdkPin", () => {
     expect(result).toEqual({
       pin: null,
       sdkField: "dependencies",
-      sdkMoved: true,
+      sdkRelocation: "deduplicated",
       shimmedTypePins: [],
     });
     const manifest = await readJson(join(rootDir, "package.json"));

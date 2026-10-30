@@ -65,6 +65,7 @@ const UNSCANNED_DIRECTORIES = new Set([
 const MAX_SOURCE_SCAN_DEPTH = 12;
 
 type PluginSdkField = "dependencies" | "devDependencies";
+type PluginSdkRelocation = "none" | "moved" | "deduplicated";
 
 interface MigratePluginArgs {
   rootDir: string;
@@ -77,7 +78,7 @@ export interface PluginPackageLayoutMigration {
   changed: boolean;
   pin: { from: string | null; to: string } | null;
   sdkField: PluginSdkField;
-  sdkMoved: boolean;
+  sdkRelocation: PluginSdkRelocation;
   enginesFloor: { from: string | null; to: string } | null;
   removedPathMaps: string[];
   removedIncludes: string[];
@@ -114,7 +115,7 @@ export async function migratePluginToPackageLayout(
       importPlan.length > 0,
     pin: manifestPlan.pin,
     sdkField: manifestPlan.sdkField,
-    sdkMoved: manifestPlan.sdkMoved,
+    sdkRelocation: manifestPlan.sdkRelocation,
     enginesFloor: manifestPlan.enginesFloor,
     removedPathMaps: tsconfigPlan.removedPathMaps,
     removedIncludes: tsconfigPlan.removedIncludes,
@@ -264,7 +265,7 @@ export interface ShimmedTypePinChange {
 interface PluginSdkPinChange {
   pin: { from: string | null; to: string } | null;
   sdkField: PluginSdkField;
-  sdkMoved: boolean;
+  sdkRelocation: PluginSdkRelocation;
   shimmedTypePins: ShimmedTypePinChange[];
 }
 
@@ -284,7 +285,7 @@ export async function setPluginSdkPin(
   return {
     pin: plan.pin,
     sdkField: plan.sdkField,
-    sdkMoved: plan.sdkMoved,
+    sdkRelocation: plan.sdkRelocation,
     shimmedTypePins: plan.shimmedTypePins,
   };
 }
@@ -292,7 +293,7 @@ export async function setPluginSdkPin(
 interface ManifestPlan {
   pin: { from: string | null; to: string } | null;
   sdkField: PluginSdkField;
-  sdkMoved: boolean;
+  sdkRelocation: PluginSdkRelocation;
   shimmedTypePins: ShimmedTypePinChange[];
   enginesFloor: { from: string | null; to: string } | null;
   text: string | null;
@@ -340,15 +341,24 @@ async function planManifest(
     : "dependencies";
   const declared = asRecord(manifest[sdkField])["@get-bb/plugin-sdk"];
   const otherDeclared = asRecord(manifest[otherField])["@get-bb/plugin-sdk"];
-  const sdkMoved = typeof otherDeclared === "string";
+  const sdkRelocation: PluginSdkRelocation =
+    typeof otherDeclared !== "string"
+      ? "none"
+      : typeof declared === "string"
+        ? "deduplicated"
+        : "moved";
   const declaredVersion =
-    typeof declared === "string" ? declared : sdkMoved ? otherDeclared : null;
+    typeof declared === "string"
+      ? declared
+      : typeof otherDeclared === "string"
+        ? otherDeclared
+        : null;
   const pin =
     declaredVersion === sdkVersion
       ? null
       : { from: declaredVersion, to: sdkVersion };
-  if (pin !== null || sdkMoved) {
-    if (sdkMoved) {
+  if (pin !== null || sdkRelocation !== "none") {
+    if (sdkRelocation !== "none") {
       const deps = asRecord(manifest[otherField]);
       delete deps["@get-bb/plugin-sdk"];
       if (Object.keys(deps).length === 0) {
@@ -382,14 +392,14 @@ async function planManifest(
 
   if (
     pin === null &&
-    !sdkMoved &&
+    sdkRelocation === "none" &&
     shimmedTypePins.length === 0 &&
     enginesFloor === null
   ) {
     return {
       pin: null,
       sdkField,
-      sdkMoved: false,
+      sdkRelocation: "none",
       shimmedTypePins: [],
       enginesFloor: null,
       text: null,
@@ -398,7 +408,7 @@ async function planManifest(
   return {
     pin,
     sdkField,
-    sdkMoved,
+    sdkRelocation,
     shimmedTypePins,
     enginesFloor,
     text: reserialize(raw, manifest),

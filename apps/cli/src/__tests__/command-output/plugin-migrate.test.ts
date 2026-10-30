@@ -383,7 +383,7 @@ describe("bb plugin types on a package-layout plugin", () => {
     ).rejects.toThrow("process.exit:1");
 
     expect(vi.mocked(console.error).mock.calls.flat().join("\n")).toContain(
-      'Move "@get-bb/plugin-sdk" to dependencies — host.ts imports "@get-bb/plugin-sdk/provider-bridge", which the build bundles from the plugin\'s own SDK install, and Git installs omit devDependencies (`bb plugin types` does it for you).',
+      'Move "@get-bb/plugin-sdk" from devDependencies to dependencies — host.ts imports "@get-bb/plugin-sdk/provider-bridge", which the build bundles from the plugin\'s own SDK install, and Git installs omit devDependencies (`bb plugin types` does it for you).',
     );
 
     await runCommand(["plugin", "types", rootDir], register);
@@ -397,6 +397,70 @@ describe("bb plugin types on a package-layout plugin", () => {
       "Moved @get-bb/plugin-sdk from devDependencies to dependencies.",
     );
   });
+
+  const providerBridgeReason =
+    'host.ts imports "@get-bb/plugin-sdk/provider-bridge", which the build bundles from the plugin\'s own SDK install, and Git installs omit devDependencies (`bb plugin types` does it for you).';
+
+  it.each([
+    {
+      name: "a duplicate pin in devDependencies",
+      fields: {
+        dependencies: { "@get-bb/plugin-sdk": PLUGIN_SDK_VERSION },
+        devDependencies: { "@get-bb/plugin-sdk": PLUGIN_SDK_VERSION },
+      },
+      check: `Remove the duplicate "@get-bb/plugin-sdk" from devDependencies; keep it in dependencies — ${providerBridgeReason}`,
+      applied:
+        "Removed the duplicate @get-bb/plugin-sdk from devDependencies; it stays in dependencies.",
+    },
+    {
+      name: "a duplicate pin with a stale version",
+      fields: {
+        dependencies: { "@get-bb/plugin-sdk": "0.2.0" },
+        devDependencies: { "@get-bb/plugin-sdk": "0.2.0" },
+      },
+      check: `Remove the duplicate "@get-bb/plugin-sdk" from devDependencies, set it to ${PLUGIN_SDK_VERSION} in dependencies, and re-run npm install — ${providerBridgeReason}`,
+      applied:
+        "Removed the duplicate @get-bb/plugin-sdk from devDependencies; it stays in dependencies.",
+    },
+    {
+      name: "a stale pin in the wrong field",
+      fields: { devDependencies: { "@get-bb/plugin-sdk": "0.2.0" } },
+      check: `Move "@get-bb/plugin-sdk" from devDependencies to dependencies at ${PLUGIN_SDK_VERSION} and re-run npm install — ${providerBridgeReason}`,
+      applied: "Moved @get-bb/plugin-sdk from devDependencies to dependencies.",
+    },
+    {
+      name: "no SDK pin",
+      fields: {},
+      check: `Add "@get-bb/plugin-sdk" ${PLUGIN_SDK_VERSION} to dependencies and run npm install — ${providerBridgeReason}`,
+      applied: `@get-bb/plugin-sdk: (not declared) → ${PLUGIN_SDK_VERSION} in dependencies.`,
+    },
+  ])(
+    "--check names every fix for $name on a provider-bridge plugin",
+    async ({ fields, check, applied }) => {
+      await writeManifest({
+        name: "bb-plugin-provider",
+        bb: { server: "./server.ts", host: "./host.ts" },
+        ...fields,
+      });
+      await writeFile(join(rootDir, "server.ts"), "export default () => {};\n");
+      await writeFile(join(rootDir, "host.ts"), providerBridgeHost);
+
+      await expect(
+        runCommand(["plugin", "types", rootDir, "--check"], register),
+      ).rejects.toThrow("process.exit:1");
+      expect(vi.mocked(console.error).mock.calls.flat()).toContain(check);
+
+      await runCommand(["plugin", "types", rootDir], register);
+
+      const manifest = await readManifest();
+      expect(manifest.dependencies).toEqual({
+        "@get-bb/plugin-sdk": PLUGIN_SDK_VERSION,
+      });
+      expect(manifest.devDependencies).toBeUndefined();
+      expect(collectLogPayloads(vi.mocked(console.log))).toContain(applied);
+      await runCommand(["plugin", "types", rootDir, "--check"], register);
+    },
+  );
 
   it("still moves a stub-only host entry's SDK pin to devDependencies", async () => {
     await writeHostPlugin(
